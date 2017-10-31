@@ -21,6 +21,18 @@ cov_rad = {   'H' : 0.37, 'C' : 0.77, 'O' : 0.73, 'N' : 0.75, 'F' : 0.71,
 'Ni': 0.55, 'Cu': 0.46, 'Zn': 0.60, 'Ga': 1.22, 'Ge': 1.22, 'As': 1.22,
 'Se': 1.17, 'Br': 1.14, 'Kr': 1.03}
 
+temp_symbol = ["X", "H", "HE", "LI", "BE", "B", "C", "N", "O", "F", "NE", "NA", "MG",
+"AL", "SI", "P", "S", "CL", "AR", "K", "CA", "SC", "TI", "V", "CR", "MN", "FE", "CO",
+"NI", "CU", "ZN", "GA", "GE", "AS", "SE", "BR", "KR", "RB", "SR", "Y", "ZR", "NB",
+"MO", "TC", "RU", "RH", "PD", "AG", "CD", "IN", "SN", "SB", "TE", "I", "XE", "CS",
+"BA", "LA", "CE", "PR", "ND", "PM", "SM", "EU", "GD", "TB", "DY", "HO", "ER", "TM",
+"YB", "LU", "HF", "TA", "W", "RE", "OS", "IR", "PT", "AU", "HG", "TL", "PB", "BI",
+"PO", "AT", "RN", "FR", "RA", "AC", "TH", "PA", "U", "NP", "PU", "AM", "CM", "BK",
+"CF", "ES", "FM", "MD", "NO", "LR", "RF", "DB", "SG", "BH", "HS", "MT", "DS", "RG",
+"UUB", "UUT", "UUQ", "UUP", "UUH", "UUS", "UUO"]
+
+z_num = {}
+for i,el in enumerate(temp_symbol): z_num[el] = i
 
 def dist(a,b):
     x = (a[0]-b[0])**2
@@ -35,7 +47,7 @@ def bound(a_el,a,b_el,b):
 
 class crystal():
 
-    def __init__(self, mol, fragment = True): 
+    def __init__(self, mol): 
         if type(mol) is str and mol.endswith('.xyz'):
             self.fil = mol
             with open(mol,'r') as ofil:
@@ -51,8 +63,8 @@ class crystal():
                     geom = np.vstack([geom,coords])
                 mol = [els,geom]
         self.mol = mol
-        if not fragment: self.frags = []
-        else: self.bfs()
+        self.frags = []
+
     def print_out(self):
         els = self.mol[0]
         print(len(els))
@@ -109,10 +121,111 @@ class crystal():
             for i in mol:
                 mels.append(els[i])
                 mcoords.append(coords[i])
-            mols.append(crystal([mels,mcoords],fragment = False))
+            mols.append(crystal([mels,mcoords]))
         self.frags = mols
 
+    #function that moves mol to align with self
+    def align(self, mol):
+        #self
+        els0 = self.mol[0]  
+        coords0 = self.mol[1] 
+        #shift to center
+        coords0 = coords0 - coords0.mean(axis=0)
+        #mol
+        els1 = mol.mol[0]  
+        coords1 = mol.mol[1]  
+        coords1 = coords1 - coords1.mean(axis=0)
+        
+        #covariance matrix
+        H = np.dot(coords0, coords1.T)
+        V, s, W = np.linalg.svd(H)
+        d = np.linalg.det(np.dot(W,V))
+        if d < 0: V[:,-1] *= -1.
+        R = np.dot(V,W) 
+        coords1 = np.dot(R,coords1)
+        rmsd = np.linalg.norm(coords0 - coords1) / np.sqrt(coords1.shape[0])
+        return rmsd
     
+    def extract_frags(self, frag_nums):
+        els = []
+        coords = np.array([]).reshape(0,3)
+        for f in frag_nums:
+            els = els + self.frags[f].mol[0]    
+            coords = np.vstack([coords,self.frags[f].mol[1]])
+        return crystal([els,coords])    
+
+    def nuclear_repulsion_energy(self):
+        e = 0.
+        for a1 in range(len(self.mol[0])):
+            for a2 in range(a1):
+                z1 = z_num[self.mol[0][a1]]
+                z2 = z_num[self.mol[0][a2]]
+                d = 1.88973*dist(self.mol[1][a1],self.mol[1][a2])
+                e += z1 * z2 / d
+        return e 
+
+
+    def get_nmers(self, N):
+        """ Returns a dictionary of lists that contain crystal objects for
+            all unique n-mers from n=1-N. Key values correspond to the value of 
+            n.
+
+        >>> H2O_20.get_nmers(1)
+        {1: [<__main__.crystal object at 0x7fc5caa3b4e0>, <__main__.crystal object at 0x7fc5caa3b3c8>]}
+        """
+
+        from itertools import combinations
+        
+        self.bfs()
+        
+        nfrags = len(self.frags)
+        if N > nfrags: 
+            raise Exception("BFS only found %d fragments. Cannot find %d-mer with %d fragments." % (nfrags,N,nfrags)) 
+
+        inds = [x for x in range(nfrags)]
+        
+        #dictionary with lists for each class of n-mer
+        unique = {}
+        for i in range(N): unique[i+1] = []
+
+        #for each type of n-mer
+        for i in range(N):
+            #add each unique n-mer
+            nres = {}
+            for combo in combinations(inds,i+1):
+                mol = self.extract_frags(combo)
+                nre = mol.nuclear_repulsion_energy()
+                #tweak to whatever tightness we'd likee
+                nre = round(nre,2)                    
+                try: nres[nre].append(mol)
+                except: nres[nre] = [mol]
+            for nre in nres.keys():
+                lnre = len(nres[nre])
+                #last element not checked for duplication 
+                unique[i+1].append(nres[nre][-1])
+                #nothing to compare too if only one 
+                if lnre == 1: continue
+                for m1 in range(lnre-1):
+                    duplicate = False
+                    for m2 in range(m1+1,lnre):
+                        mol1 = nres[nre][m1] 
+                        mol2 = nres[nre][m2]
+                        rmsd = mol1.align(mol2) 
+                        #make keyword for this option
+                        if rmsd < 0.01: 
+                            duplicate = True
+                            break
+                    if not duplicate: unique[i+1].append(mol1)
+        return unique 
+ 
  
 a = crystal("sulfanilamide.xyz")
-a.frags[0].write_out("TEST.xyz")
+monomers = a.get_nmers(1)[1]
+m1 = monomers[0]
+m2 = monomers[1]
+print(m1.align(m2))
+m1.write_out("sulf1.xyz")
+m2.write_out("sulf2.xyz")
+#print(a.rmsd(a))
+#benz0 = crystal("benz0.xyz")
+#benz1 = crystal("benz1.xyz")
