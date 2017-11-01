@@ -125,7 +125,9 @@ class crystal():
         self.frags = mols
 
     #function that moves mol to align with self
-    def align(self, mol):
+    # 0 is Q
+    # 1 is P
+    def rmsd(self, mol):
         #self
         els0 = self.mol[0]  
         coords0 = self.mol[1] 
@@ -137,14 +139,15 @@ class crystal():
         coords1 = coords1 - coords1.mean(axis=0)
         
         #covariance matrix
-        H = np.dot(coords0, coords1.T)
-        V, s, W = np.linalg.svd(H)
-        d = np.linalg.det(np.dot(W,V))
-        if d < 0: V[:,-1] *= -1.
-        R = np.dot(V,W) 
-        coords1 = np.dot(R,coords1)
-        rmsd = np.linalg.norm(coords0 - coords1) / np.sqrt(coords1.shape[0])
-        return rmsd
+        H = np.dot(coords1.T, coords0)
+        V, s, Wt = np.linalg.svd(H)
+        d = np.linalg.det(np.dot(V,Wt))
+        I = np.identity(3)
+        I[2,2] = d 
+        R = np.dot(np.dot(V,I),Wt)
+        coords1 = np.dot(coords1,R)
+        ans = np.linalg.norm(coords0 - coords1) / np.sqrt(coords0.shape[0])
+        return ans
     
     def extract_frags(self, frag_nums):
         els = []
@@ -164,6 +167,13 @@ class crystal():
                 e += z1 * z2 / d
         return e 
 
+    def distance_matrix(self):
+        natoms = len(self.mol[0])
+        mat = np.zeros((natoms,natoms))
+        for a1 in range(natoms):
+            for a2 in range(a1):
+                mat[a1][a2] = dist(self.mol[1][a1],self.mol[1][a2])
+        return mat
 
     def get_nmers(self, N):
         """ Returns a dictionary of lists that contain crystal objects for
@@ -210,22 +220,55 @@ class crystal():
                     for m2 in range(m1+1,lnre):
                         mol1 = nres[nre][m1] 
                         mol2 = nres[nre][m2]
-                        rmsd = mol1.align(mol2) 
+                        diff = mol1.rmsd(mol2) 
                         #make keyword for this option
-                        if rmsd < 0.01: 
+                        if diff < 0.01: 
                             duplicate = True
                             break
                     if not duplicate: unique[i+1].append(mol1)
         return unique 
  
+sulf1 = crystal("s7-1_Angstroms.xyz")
+sulf2 = crystal("s7-2_Angstroms.xyz")
+
+s1dm = sulf1.distance_matrix()
+s2dm = sulf2.distance_matrix()
+print(np.allclose(s1dm,s2dm, atol = 1e-2))
+print(sulf1.rmsd(sulf2))
+print(sulf1.nuclear_repulsion_energy())
+print(sulf2.nuclear_repulsion_energy())
+
+
+#a = crystal("138K_SMALL_FINAL.xyz")
+#a.bfs()
+#for mon in a.frags: print(mon.distance_matrix())
+#for i,mon in enumerate(monomers): mon.write_out("mon_"+str(i)+".xyz")
  
-a = crystal("sulfanilamide.xyz")
-monomers = a.get_nmers(1)[1]
-m1 = monomers[0]
-m2 = monomers[1]
-print(m1.align(m2))
-m1.write_out("sulf1.xyz")
-m2.write_out("sulf2.xyz")
+#a = crystal("sulfanilamide.xyz")
+#a.bfs()
+#frags = a.frags
+#print(frags[0].distance_matrix(), frags[1].distance_matrix())
+#monomers = a.get_nmers(1)[1]
+#m1 = monomers[0]
+#m2 = monomers[1]
+#print(m1.align(m2))
+#m1.write_out("sulf1.xyz")
+#m2.write_out("sulf2.xyz")
 #print(a.rmsd(a))
 #benz0 = crystal("benz0.xyz")
 #benz1 = crystal("benz1.xyz")
+
+#b0dm = benz0.distance_matrix()
+#b1dm = benz1.distance_matrix()
+
+#print(b0dm,b1dm)
+
+#mon0 = crystal("mon_0.xyz")
+#mon1 = crystal("mon_1.xyz")
+#mon2 = crystal("mon_2.xyz")
+#mon3 = crystal("mon_3.xyz")
+#mons = [mon0, mon1, mon2, mon3]
+#print(mons[0].rmsd(mons[1]))
+##for m in range(1,len(mons)):
+##    for n in range(m):
+##        print(m,n,mons[m].align(mons[n]))
